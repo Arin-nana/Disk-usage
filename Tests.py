@@ -1,98 +1,130 @@
+# test_disk_scanner.py
+
+import unittest
+import tempfile
 import os
-import pytest
-from disk_scanner import scan_directory
-from file_size import calculate_size, format_file_size
+import shutil
+from disk_scanner import scan_directory, get_top_5_heavy_items
+from file_size import format_file_size, calculate_size
 from visualizer import visualize_disk_usage
 
-# === TEST DATA SETUP ===
-@pytest.fixture
-def test_directory(tmp_path):
-    """
-    Fixture to create a temporary directory structure for testing.
-    """
-    # Create main test directory
-    test_dir = tmp_path / "test_dir"
-    test_dir.mkdir()
+class TestDiskScanner(unittest.TestCase):
 
-    # Create files in the main directory
-    (test_dir / "file1.txt").write_text("File 1 content")
-    (test_dir / "file2.txt").write_text("File 2 content")
-    (test_dir / "file3.log").write_text("Log content")
+    def setUp(self):
+        # Create a temporary directory for testing
+        self.test_dir = tempfile.mkdtemp()
 
-    # Create a subdirectory
-    subdir = test_dir / "subdir"
-    subdir.mkdir()
-    (subdir / "file4.txt").write_text("File 4 content")
+    def tearDown(self):
+        # Remove the directory after test
+        shutil.rmtree(self.test_dir)
 
-    return test_dir
+    def test_scan_directory_nonexistent(self):
+        # Test scanning a non-existent directory
+        with self.assertRaises(FileNotFoundError):
+            scan_directory('nonexistent_path')
 
+    def test_scan_directory_empty(self):
+        # Test scanning an empty directory
+        output = scan_directory(self.test_dir)
+        expected_output = f"> {os.path.basename(self.test_dir)}\n"
+        self.assertEqual(output, expected_output)
 
-# === TESTS FOR disk_scanner.py ===
+    def test_scan_directory_with_files(self):
+        # Create files and directories
+        os.mkdir(os.path.join(self.test_dir, 'subdir'))
+        with open(os.path.join(self.test_dir, 'file1.txt'), 'w') as f:
+            f.write('Test file 1')
+        with open(os.path.join(self.test_dir, 'subdir', 'file2.txt'), 'w') as f:
+            f.write('Test file 2')
 
-def test_scan_directory_invalid_path():
-    """
-    Test scanning an invalid directory path.
-    """
-    with pytest.raises(FileNotFoundError):
-        scan_directory("invalid_path")
-
-
-# === TESTS FOR file_size.py ===
-def test_calculate_size_file(test_directory):
-    """
-    Test calculating the size of a single file.
-    """
-    file_path = test_directory / "file1.txt"
-    size = calculate_size(str(file_path))
-    assert size == os.path.getsize(file_path)
+        output = scan_directory(self.test_dir)
+        self.assertIn('file1.txt -', output)
+        self.assertIn('[DIR] subdir', output)
+        self.assertIn('file2.txt -', output)
 
 
-def test_calculate_size_directory(test_directory):
-    """
-    Test calculating the size of a directory.
-    """
-    size = calculate_size(str(test_directory))
-    assert size > 0
+    def test_get_top_5_heavy_items(self):
+        # Create files of different sizes
+        file_sizes = [100, 200, 300, 400, 500, 600]
+        for i, size in enumerate(file_sizes):
+            with open(os.path.join(self.test_dir, f'file{i}.txt'), 'wb') as f:
+                f.write(b'0' * size)
+        top_items = get_top_5_heavy_items(self.test_dir)
+        # Should return top 5 largest files
+        expected_files = [os.path.join(self.test_dir, f'file{5 - i}.txt') for i in range(5)]
+        returned_files = [item['name'] for item in top_items]
+        self.assertEqual(returned_files, expected_files)
 
+    def test_get_top_5_heavy_items_not_directory(self):
+        # Test passing a non-directory path
+        with self.assertRaises(NotADirectoryError):
+            get_top_5_heavy_items('not_a_directory')
 
-def test_format_file_size():
-    """
-    Test formatting file sizes into readable strings.
-    """
-    assert format_file_size(1024) == "1.0 KB"
-    assert format_file_size(1048576) == "1.0 MB"
-    assert format_file_size(1073741824) == "1.0 GB"
+class TestFileSize(unittest.TestCase):
 
+    def test_format_file_size(self):
+        # Test formatting of various file sizes
+        self.assertEqual(format_file_size(500), '500 bytes')
+        self.assertEqual(format_file_size(1024), '1.0 KB')
+        self.assertEqual(format_file_size(1024 ** 2), '1.0 MB')
+        self.assertEqual(format_file_size(1024 ** 3), '1.0 GB')
 
-# === TESTS FOR visualizer.py ===
-def test_visualize_disk_usage_no_filter(test_directory):
-    """
-    Test visualizing disk usage without file extension filtering.
-    """
-    result = visualize_disk_usage(str(test_directory))
-    assert "file1.txt" in result
-    assert "subdir" in result  # Проверка на наличие поддиректории
-    assert "file4.txt" in result  # Проверка на файлы внутри поддиректории
+    def test_calculate_size_file(self):
+        # Test size calculation of a single file
+        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+            tmp_file.write(b'0' * 100)
+            tmp_file_name = tmp_file.name
+        size = calculate_size(tmp_file_name)
+        self.assertEqual(size, 100)
+        os.remove(tmp_file_name)
 
+    def test_calculate_size_directory(self):
+        # Test size calculation of a directory
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with open(os.path.join(tmp_dir, 'file1.txt'), 'wb') as f:
+                f.write(b'0' * 100)
+            with open(os.path.join(tmp_dir, 'file2.txt'), 'wb') as f:
+                f.write(b'0' * 200)
+            size = calculate_size(tmp_dir)
+            self.assertEqual(size, 300)
 
+    def test_calculate_size_nonexistent(self):
+        # Test size calculation of a non-existent path
+        size = calculate_size('nonexistent_path')
+        self.assertEqual(size, 0)
 
-def test_visualize_disk_usage_with_filter(test_directory):
-    """
-    Test visualizing disk usage with file extension filtering.
-    """
-    result = visualize_disk_usage(str(test_directory), extension_filter=".txt")
-    assert "file2.log" not in result
-    assert "file1.txt" in result
+class TestVisualizer(unittest.TestCase):
 
+    def setUp(self):
+        # Create a temporary directory for testing
+        self.test_dir = tempfile.mkdtemp()
 
-def test_visualize_disk_usage_invalid_path():
-    """
-    Test visualizing disk usage for an invalid path.
-    """
-    result = visualize_disk_usage("invalid_path")
-    assert "Error" in result
+    def tearDown(self):
+        # Remove the directory after test
+        shutil.rmtree(self.test_dir)
 
+    def test_visualize_disk_usage_empty(self):
+        # Test visualization with an empty directory
+        with self.assertRaises(ValueError):
+            visualize_disk_usage(self.test_dir)
 
-# === TESTS FOR interface ===
-# Not directly testable due to input/output dependency.
-# Would require mocking user input for proper testing.
+    def test_visualize_disk_usage_nonexistent(self):
+        # Test visualization with a non-existent path
+        with self.assertRaises(FileNotFoundError):
+            visualize_disk_usage('nonexistent_path')
+
+    def test_visualize_disk_usage(self):
+        # Create files for visualization
+        with open(os.path.join(self.test_dir, 'file1.txt'), 'w') as f:
+            f.write('Test file 1')
+        with open(os.path.join(self.test_dir, 'file2.txt'), 'w') as f:
+            f.write('Test file 2')
+
+        # Test that the visualization runs without exceptions
+        try:
+            visualize_disk_usage(self.test_dir)
+        except Exception as e:
+            self.fail(f"visualize_disk_usage raised an exception {e}")
+
+if __name__ == '__main__':
+    unittest.main()

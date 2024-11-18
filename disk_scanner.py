@@ -5,13 +5,15 @@ from file_size import calculate_size, format_file_size
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-def scan_directory(path, level=0):
+def scan_directory(path, level=0, visited=None):
     """
     Scans a directory recursively and returns a formatted string with nested files and folders.
+    Handles symbolic links and avoids infinite loops.
 
     Args:
         path (str): The path to the directory to scan.
         level (int): The current depth of recursion for formatting.
+        visited (set): A set of visited paths to avoid processing the same directory multiple times.
 
     Returns:
         str: A formatted string representing the directory structure.
@@ -19,15 +21,37 @@ def scan_directory(path, level=0):
     if not os.path.exists(path):
         raise FileNotFoundError(f"Path '{path}' does not exist.")
 
+    if visited is None:
+        visited = set()
+
+    resolved_path = os.path.realpath(path)  # Resolve symbolic links
+    if resolved_path in visited:
+        return f"{'    ' * level}[SYMLINK] {os.path.basename(path)} -> {os.readlink(path)}\n"
+
+    visited.add(resolved_path)
+
     result = []
     indent = "    " * level  # Indentation based on depth level
     result.append(f"{indent}> {os.path.basename(path)}\n")
 
     for item in sorted(os.listdir(path), key=lambda x: x.lower()):
         item_path = os.path.join(path, item)
-        if os.path.isdir(item_path):
+        if os.path.islink(item_path):  # Handle symbolic links
+            link_target = os.readlink(item_path)
+            resolved_target = os.path.realpath(item_path)
+            if resolved_target not in visited:
+                if os.path.isdir(resolved_target):
+                    result.append(f"{indent}    [SYMLINK DIR] {item} -> {link_target}\n")
+                    result.append(scan_directory(resolved_target, level + 1, visited))  # Recurse
+                else:
+                    size = calculate_size(resolved_target)
+                    formatted_size = format_file_size(size)
+                    result.append(f"{indent}    [SYMLINK FILE] {item} -> {link_target} - {formatted_size}\n")
+            else:
+                result.append(f"{indent}    [SYMLINK] {item} -> {link_target}\n")
+        elif os.path.isdir(item_path):
             result.append(f"{indent}    [DIR] {item}\n")
-            result.append(scan_directory(item_path, level + 1))  # Recursive call for subdirectories
+            result.append(scan_directory(item_path, level + 1, visited))  # Recurse
         else:
             size = calculate_size(item_path)
             formatted_size = format_file_size(size)
