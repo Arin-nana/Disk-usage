@@ -94,11 +94,14 @@ class DiskScannerGUI(tk.Tk):
             return
 
         def perform_visualization():
+            progress_queue = Queue()
             try:
                 labels, sizes = visualize_disk_usage(directory)
                 plot_disk_usage(labels, sizes)
+                progress_queue.put(1)
             except Exception as e:
                 messagebox.showerror("Error", str(e))
+
 
         threading.Thread(target=perform_visualization).start()
 
