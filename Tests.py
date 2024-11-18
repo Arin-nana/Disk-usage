@@ -28,23 +28,6 @@ def test_directory(tmp_path):
 
 
 # === TESTS FOR disk_scanner.py ===
-def test_scan_directory_no_filter(test_directory):
-    """
-    Test scanning a directory without file extension filtering.
-    """
-    results = scan_directory(str(test_directory))
-    assert len(results) == 4
-    assert any(item['name'] == "file1.txt" for item in results)
-
-
-def test_scan_directory_with_filter(test_directory):
-    """
-    Test scanning a directory with file extension filtering.
-    """
-    results = scan_directory(str(test_directory), extension_filter=".txt")
-    assert len(results) == 2
-    assert all(item['name'].endswith(".txt") for item in results)
-
 
 def test_scan_directory_invalid_path():
     """

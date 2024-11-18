@@ -1,55 +1,67 @@
-import os
-from disk_scanner import scan_directory
-from visualizer import visualize_disk_usage
+from disk_scanner import scan_directory, get_top_5_heavy_items
+from visualizer import visualize_disk_usage, plot_disk_usage
+
+
+def print_tree(path):
+    """
+    Prints the directory tree in a human-readable format using scan_directory.
+
+    Args:
+        path (str): The root directory path.
+    """
+    try:
+        tree_structure = scan_directory(path)
+        print(tree_structure)
+    except FileNotFoundError as e:
+        print(f"Error: {str(e)}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {str(e)}")
+
 
 def main_menu():
     """
-    Display the main menu and handle user input for disk scanning.
+    Display the main menu and handle user input.
     """
     while True:
         print("\n=== Disk Scanner ===")
-        print("1. Scan a directory")
+        print("1. Scan directory and print tree")
         print("2. Visualize disk usage")
-        print("3. Exit")
+        print("3. Show top 5 largest items")
+        print("4. Exit")
 
-        choice = input("Choose an option (1-3): ").strip()
+        choice = input("Enter your choice: ").strip()
         if choice == "1":
-            scan_directory_menu()
+            path = input("Enter directory path to scan: ").strip()
+            print("\nDirectory tree structure:")
+            print_tree(path)
         elif choice == "2":
-            visualize_disk_usage_menu()
+            path = input("Enter directory path to visualize: ").strip()
+            try:
+                labels, sizes = visualize_disk_usage(path)
+                plot_disk_usage(labels, sizes)
+            except FileNotFoundError as e:
+                print(f"Error: {str(e)}")
+            except ValueError as e:
+                print(f"Error: {str(e)}")
+            except Exception as e:
+                print(f"An unexpected error occurred: {str(e)}")
         elif choice == "3":
-            print("Exiting. Goodbye!")
+            path = input("Enter directory path: ").strip()
+            try:
+                top_items = get_top_5_heavy_items(path)
+                print("\nTop 5 largest items:")
+                for item in top_items:
+                    print(f"{item['name']}: {item['size']}")
+            except FileNotFoundError as e:
+                print(f"Error: {str(e)}")
+            except Exception as e:
+                print(f"An unexpected error occurred: {str(e)}")
+        elif choice == "4":
+            print("Goodbye!")
             break
         else:
             print("Invalid choice. Please try again.")
 
-def scan_directory_menu():
-    """
-    Menu for scanning a directory and displaying its contents.
-    """
-    path = input("Enter the path to the directory: ").strip()
-    extension = input("Enter a file extension to filter (or press Enter to skip): ").strip() or None
-
-    try:
-        contents = scan_directory(path, extension_filter=extension)
-        if not contents:
-            print(f"No files or directories found in '{path}'.")
-        else:
-            print("\nContents of the directory:")
-            for item in contents:
-                print(f"{item['type']}: {item['name']} ({item['size']})")
-    except (FileNotFoundError, NotADirectoryError) as e:
-        print(f"Error: {e}")
-
-def visualize_disk_usage_menu():
-    """
-    Menu for visualizing disk usage of a directory.
-    """
-    path = input("Enter the path to visualize: ").strip()
-    extension = input("Enter a file extension to filter (or press Enter to skip): ").strip() or None
-
-    result = visualize_disk_usage(path, extension_filter=extension)
-    print("\n" + result)
 
 if __name__ == "__main__":
     main_menu()

@@ -1,143 +1,146 @@
+import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import threading
-import os
-import matplotlib.pyplot as plt
-from file_size import calculate_size
+from disk_scanner import scan_directory, get_top_5_heavy_items
+from visualizer import visualize_disk_usage, plot_disk_usage
+from file_size import format_file_size, calculate_size
 
-# Функция для сканирования директории
-def scan_directory(path, extension_filter=None):
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Path '{path}' does not exist.")
-    contents = []
-    for root, dirs, files in os.walk(path):
-        for item in dirs + files:
-            item_path = os.path.join(root, item)
-            if extension_filter and not item.endswith(extension_filter):
-                continue
-            item_type = "Directory" if os.path.isdir(item_path) else "File"
-            item_size = calculate_size(item_path)
-            contents.append({"type": item_type, "name": item, "size": item_size})
-    if not contents:
-        raise ValueError(f"No files or directories found in '{path}'.")
-    return contents
 
-# Функция для визуализации использования диска
-def visualize_disk_usage(path, extension_filter=None):
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Path '{path}' does not exist.")
-    data = []
-    labels = []
-    for root, dirs, files in os.walk(path):
-        for item in dirs + files:
-            item_path = os.path.join(root, item)
-            if os.path.isfile(item_path) or os.path.isdir(item_path):
-                if extension_filter and not item.endswith(extension_filter):
-                    continue
-                size = calculate_size(item_path)
-                data.append(size)
-                labels.append(item)
-    if not data:
-        raise ValueError("No data found for visualization.")
-    return labels, data
+class DiskScannerGUI(tk.Tk):
+    """
+    GUI application for scanning and visualizing disk usage.
+    """
 
-# Функция для создания графика
-def plot_disk_usage(labels, sizes):
-    plt.figure(figsize=(10, 7))
-    plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140)
-    plt.axis('equal')  # Equal aspect ratio ensures the pie chart is circular.
-    plt.title("Disk Usage Visualization")
-    plt.show()
+    def __init__(self):
+        super().__init__()
+        self.title("Disk Scanner with Tree View")
+        self._create_widgets()
 
-# Функция для обработки кнопки "Scan Directory"
-def scan_directory_gui():
-    directory = path_entry.get()
-    extension = extension_entry.get().strip() or None
-    if not os.path.isdir(directory):
-        messagebox.showerror("Error", f"'{directory}' is not a valid directory.")
-        return
-    progress_bar.start()
-    results_text.delete(1.0, tk.END)  # Clear previous results
-    def perform_scan():
-        try:
-            contents = scan_directory(directory, extension_filter=extension)
-            for item in contents:
-                results_text.insert(tk.END, f"{item['type']}: {item['name']} ({item['size']} bytes)\n")
-        except FileNotFoundError as e:
-            messagebox.showerror("Error", str(e))
-        except ValueError as e:
-            messagebox.showinfo("Info", str(e))
-        except Exception as e:
-            messagebox.showerror("Error", f"An unexpected error occurred: {e}")
-        finally:
-            progress_bar.stop()
-    threading.Thread(target=perform_scan).start()
+    def _create_widgets(self):
+        """
+        Creates and packs all widgets for the application.
+        """
+        tk.Label(self, text="Enter directory path:").pack(pady=5)
 
-# Функция для обработки кнопки "Visualize Disk Usage"
-def visualize_disk_usage_gui():
-    directory = path_entry.get()
-    extension = extension_entry.get().strip() or None
-    if not os.path.isdir(directory):
-        messagebox.showerror("Error", f"'{directory}' is not a valid directory.")
-        return
-    progress_bar.start()
-    def perform_visualization():
-        try:
-            labels, sizes = visualize_disk_usage(directory, extension_filter=extension)
-            progress_bar.stop()
-            plot_disk_usage(labels, sizes)
-        except FileNotFoundError as e:
-            progress_bar.stop()
-            messagebox.showerror("Error", str(e))
-        except ValueError as e:
-            progress_bar.stop()
-            messagebox.showinfo("Info", str(e))
-        except Exception as e:
-            progress_bar.stop()
-            messagebox.showerror("Error", f"An unexpected error occurred: {e}")
-    threading.Thread(target=perform_visualization).start()
+        # Path input and browse button
+        frame = tk.Frame(self)
+        frame.pack(pady=5)
+        self.path_entry = tk.Entry(frame, width=50)
+        self.path_entry.pack(side=tk.LEFT, padx=5)
+        tk.Button(frame, text="Browse", command=self._browse_directory).pack(side=tk.LEFT)
 
-# Функция для выбора директории через проводник
-def browse_directory():
-    selected_directory = filedialog.askdirectory()
-    if selected_directory:
-        path_entry.delete(0, tk.END)
-        path_entry.insert(0, selected_directory)
+        # Progress bar
+        self.progress_bar = ttk.Progressbar(self, orient="horizontal", mode="indeterminate", length=300)
+        self.progress_bar.pack(pady=10)
 
-# Создаем основное окно приложения
-root = tk.Tk()
-root.title("Disk Scanner with Visualization")
+        # Action buttons
+        tk.Button(self, text="Scan and Display Tree", command=self._scan_and_display_tree).pack(pady=5)
+        tk.Button(self, text="Visualize Disk Usage", command=self._visualize_disk_usage).pack(pady=5)
+        tk.Button(self, text="Show Top 5 Largest Items", command=self._show_top_5_heavy_items).pack(pady=5)
 
-# Метки и поля ввода
-tk.Label(root, text="Enter directory path:").pack(pady=5)
-frame = tk.Frame(root)
-frame.pack(pady=5)
-path_entry = tk.Entry(frame, width=50)
-path_entry.pack(side=tk.LEFT, padx=5)
-browse_button = tk.Button(frame, text="Browse", command=browse_directory)
-browse_button.pack(side=tk.LEFT)
+        # TreeView for displaying directory structure
+        self.tree = ttk.Treeview(self, columns=("size"), displaycolumns=("size"))
+        self.tree.heading("#0", text="Directory Structure", anchor="w")
+        self.tree.heading("size", text="Size", anchor="w")
+        self.tree.column("size", anchor="w", width=100)
+        self.tree.pack(fill=tk.BOTH, expand=True, pady=10)
 
-tk.Label(root, text="Enter file extension (optional):").pack(pady=5)
-extension_entry = tk.Entry(root, width=50)
-extension_entry.pack(pady=5)
-tk.Label(root, text="Example: .txt").pack(pady=5)
+    def _browse_directory(self):
+        """
+        Opens a dialog for selecting a directory.
+        """
+        selected_directory = filedialog.askdirectory()
+        if selected_directory:
+            self.path_entry.delete(0, tk.END)
+            self.path_entry.insert(0, selected_directory)
 
-# Прогресс-бар
-progress_bar = ttk.Progressbar(root, orient="horizontal", mode="indeterminate", length=300)
-progress_bar.pack(pady=10)
+    def _scan_and_display_tree(self):
+        """
+        Scans the directory and displays its structure in a tree view.
+        """
+        directory = self.path_entry.get()
+        if not os.path.isdir(directory):
+            messagebox.showerror("Error", f"'{directory}' is not a valid directory.")
+            return
 
-# Кнопки
-tk.Button(root, text="Scan Directory", command=scan_directory_gui).pack(pady=5)
-tk.Button(root, text="Visualize Disk Usage", command=visualize_disk_usage_gui).pack(pady=5)
+        self.progress_bar.start()
+        self.tree.delete(*self.tree.get_children())  # Clear the tree view
 
-# Поле для вывода результатов сканирования
-results_text = tk.Text(root, height=15, width=80, wrap="none")
-results_text.pack(pady=5)
+        def perform_scan():
+            try:
+                self._build_tree(directory)
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+            finally:
+                self.progress_bar.stop()
 
-# Добавляем возможность выделения и копирования
-scrollbar = tk.Scrollbar(root, command=results_text.yview)
-results_text.configure(yscrollcommand=scrollbar.set)
-scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        threading.Thread(target=perform_scan).start()
 
-# Запуск главного цикла
-root.mainloop()
+    def _build_tree(self, root_dir):
+        """
+        Builds and displays the directory tree.
+
+        Args:
+            root_dir (str): The root directory to scan.
+        """
+        def populate_treeview(tree, parent, path):
+            try:
+                for item in sorted(os.listdir(path), key=lambda x: x.lower()):
+                    item_path = os.path.join(path, item)
+                    is_dir = os.path.isdir(item_path)
+                    size = calculate_size(item_path)
+                    size_text = format_file_size(size)
+                    # Add current item to the tree
+                    node_id = tree.insert(parent, "end", text=item, values=(size_text,), open=False)
+                    if is_dir:
+                        # Recursively populate tree for subdirectories
+                        populate_treeview(tree, node_id, item_path)
+            except PermissionError:
+                pass  # Ignore directories that cannot be accessed
+
+        # Add the root directory to the tree view
+        root_node = self.tree.insert("", "end", text=os.path.basename(root_dir), values=("Calculating...",), open=True)
+        populate_treeview(self.tree, root_node, root_dir)
+
+    def _visualize_disk_usage(self):
+        """
+        Generates a pie chart to visualize disk usage for the selected directory.
+        """
+        directory = self.path_entry.get()
+        if not os.path.isdir(directory):
+            messagebox.showerror("Error", f"'{directory}' is not a valid directory.")
+            return
+
+        def perform_visualization():
+            try:
+                labels, sizes = visualize_disk_usage(directory)
+                plot_disk_usage(labels, sizes)
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+
+        threading.Thread(target=perform_visualization).start()
+
+    def _show_top_5_heavy_items(self):
+        """
+        Displays a message box with the top 5 heaviest files or directories.
+        """
+        directory = self.path_entry.get()
+        if not os.path.isdir(directory):
+            messagebox.showerror("Error", f"'{directory}' is not a valid directory.")
+            return
+
+        def fetch_top_5():
+            try:
+                top_items = get_top_5_heavy_items(directory)
+                result = "\n".join([f"{item['name']}: {item['size']}" for item in top_items])
+                messagebox.showinfo("Top 5 Largest Items", result)
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+
+        threading.Thread(target=fetch_top_5).start()
+
+
+if __name__ == "__main__":
+    app = DiskScannerGUI()
+    app.mainloop()
