@@ -1,56 +1,93 @@
+import os
+import logging
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+from file_size import calculate_size, format_file_size
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 def visualize_disk_usage(path):
     """
-    Generate data for visual representation of disk usage in the specified directory.
-
-    Args:
-        path (str): The directory path.
-
-    Returns:
-        list, list: Two lists containing labels and sizes of files and folders in the directory.
+    Generate a visual representation of disk usage with a pie chart.
+    Includes a legend with file/folder names and percentages.
     """
     if not os.path.exists(path):
         raise FileNotFoundError(f"Path '{path}' does not exist.")
 
+    # Collect sizes of top-level items only
     labels = []
     sizes = []
     for item in os.listdir(path):
         item_path = os.path.join(path, item)
+        if os.path.islink(item_path):  # Skip symbolic links
+            continue
         size = calculate_size(item_path)
-        if size > 0:  # Exclude empty items
+        if size > 0:
             labels.append(item)
             sizes.append(size)
 
     if not sizes:
         raise ValueError("No data found for visualization.")
-    
-    return labels, sizes
+
+    # Create pie chart
+    fig, ax = plt.subplots(figsize=(8, 6))
+    wedges, texts = ax.pie(sizes, startangle=140)
+    ax.axis('equal')  # Equal aspect ratio ensures a circular pie chart
+    ax.set_title("Disk Usage Visualization")
+
+    # Create legend with file names, percentages, and matching colors
+    total_size = sum(sizes)
+    percentages = [f"{(size / total_size) * 100:.1f}%" for size in sizes]
+    legend_items = [f"{label} ({percentage})" for label, percentage in zip(labels, percentages)]
+    colors = [w.get_facecolor() for w in wedges]
+
+    # Plot legend separately
+    plt.figure(figsize=(6, len(labels) * 0.5))
+    for i, (label, color) in enumerate(zip(legend_items, colors)):
+        plt.plot([], [], marker="o", markersize=10, color=color, label=label)
+    plt.legend(loc="center left", bbox_to_anchor=(0, 0.5), title="Files and Folders")
+    plt.axis("off")  # Hide the axis for legend
+
+    # Show both figures
+    plt.show()
 
 
-def plot_disk_usage(labels, sizes):
+
+def plot_disk_usage(labels, sizes, formatted_sizes):
     """
-    Plot a pie chart of disk usage with labels displayed separately as a list.
+    Plot a pie chart of disk usage with a legend for filenames and sizes.
 
     Args:
-        labels (list): List of labels for files and folders.
-        sizes (list): List of sizes corresponding to the labels.
+        labels (list): List of file and folder names.
+        sizes (list): Corresponding sizes in bytes.
+        formatted_sizes (list): Human-readable size strings.
     """
-    # Calculate percentages for each item
-    total_size = sum(sizes)
-    percentages = [(size / total_size) * 100 for size in sizes]
+    # Create a color palette
+    colors = plt.cm.tab10.colors[:len(labels)]
 
-    # Create a figure with two subplots: pie chart and list of labels
-    fig, (ax_pie, ax_list) = plt.subplots(1, 2, figsize=(12, 6), gridspec_kw={'width_ratios': [3, 2]})
-
-    # Plot the pie chart
-    ax_pie.pie(
-        sizes, startangle=140, wedgeprops=dict(width=0.4), autopct=None, colors=plt.cm.tab20.colors
+    # Create the pie chart
+    fig, ax = plt.subplots(figsize=(8, 6))
+    wedges, _, _ = ax.pie(
+        sizes,
+        colors=colors,
+        startangle=140,
+        wedgeprops={'linewidth': 0.5, 'edgecolor': 'black'}
     )
-    ax_pie.set_title("Disk Usage Visualization", fontsize=14)
 
-    # Create a text list with labels and percentages
-    label_texts = [f"{label}: {percent:.1f}% ({format_file_size(size)})" for label, percent, size in zip(labels, percentages, sizes)]
-    ax_list.axis('off')  # Remove axes
-    ax_list.text(0, 1, "\n".join(label_texts), fontsize=10, verticalalignment='top', family='monospace')
+    # Add a legend with file/folder names, sizes, and corresponding colors
+    legend_elements = [
+        Patch(facecolor=colors[i], edgecolor='black', label=f"{labels[i]}: {formatted_sizes[i]} ({sizes[i] / sum(sizes):.1%})")
+        for i in range(len(labels))
+    ]
+    ax.legend(
+        handles=legend_elements,
+        loc="center left",
+        bbox_to_anchor=(1, 0.5),
+        fontsize=9,
+        title="Files and Folders"
+    )
 
+    # Remove text from the chart itself
+    plt.title("Disk Usage Visualization (Current Directory)")
     plt.tight_layout()
     plt.show()
