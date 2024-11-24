@@ -1,10 +1,9 @@
 import os
 
 
+import os
+
 def format_file_size(bytes_size):
-    """
-    Format bytes into a human-readable string.
-    """
     if bytes_size >= 1024 ** 3:
         return f"{bytes_size / 1024 ** 3:.1f} GB"
     elif bytes_size >= 1024 ** 2:
@@ -15,9 +14,6 @@ def format_file_size(bytes_size):
 
 
 def calculate_size(path):
-    """
-    Calculate the total size of a file or directory.
-    """
     if os.path.isfile(path):
         return os.path.getsize(path)
     elif os.path.isdir(path):

@@ -1,3 +1,4 @@
+
 import os
 import logging
 from file_size import calculate_size, format_file_size
@@ -6,18 +7,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 
 def scan_directory(path, level=0, visited=None):
-    """
-    Scans a directory recursively and returns a formatted string with nested files and folders.
-    Handles symbolic links and avoids infinite loops.
-
-    Args:
-        path (str): The path to the directory to scan.
-        level (int): The current depth of recursion for formatting.
-        visited (set): A set of visited paths to avoid processing the same directory multiple times.
-
-    Returns:
-        str: A formatted string representing the directory structure.
-    """
     if not os.path.exists(path):
         raise FileNotFoundError(f"Path '{path}' does not exist.")
 
@@ -60,18 +49,26 @@ def scan_directory(path, level=0, visited=None):
     return "".join(result)
 
 
-def get_top_5_heavy_items(directory):
+
+def get_top_5_heavy_items(directory, filters=None):
     """
-    Get the 5 largest files or directories in the specified directory.
+    Get the 5 largest files or directories in the specified directory with optional filters.
     """
     logging.info(f"Retrieving top 5 heaviest items in: {directory}")
     if not os.path.isdir(directory):
         raise NotADirectoryError(f"'{directory}' is not a valid directory.")
 
+    def apply_filters(item_path):
+        if not filters:
+            return True
+        return any(item_path.endswith(ext.strip()) for ext in filters)
+
     items = []
     for root, dirs, files in os.walk(directory):
         for file in files:
             file_path = os.path.join(root, file)
+            if not apply_filters(file_path):
+                continue
             try:
                 size = os.path.getsize(file_path)
                 items.append({"name": file_path, "size": size})
@@ -80,6 +77,8 @@ def get_top_5_heavy_items(directory):
 
         for dir_name in dirs:
             dir_path = os.path.join(root, dir_name)
+            if not apply_filters(dir_path):
+                continue
             try:
                 size = sum(
                     os.path.getsize(os.path.join(dir_path, f)) for f in os.listdir(dir_path)
