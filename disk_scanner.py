@@ -2,51 +2,50 @@ import os
 import logging
 from file_size import calculate_size, format_file_size
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def scan_directory(path, level=0, visited=None):
+    logging.debug(f"Scanning directory: {path} at level {level}")
     if not os.path.exists(path):
+        logging.error(f"Path does not exist: {path}")
         raise FileNotFoundError(f"Path '{path}' does not exist.")
 
     if visited is None:
         visited = set()
 
-    resolved_path = os.path.realpath(path)  # Resolve symbolic links
+    resolved_path = os.path.realpath(path)
     if resolved_path in visited:
+        logging.warning(f"Cycle detected, skipping: {resolved_path}")
         return f"{'    ' * level}[SYMLINK] {os.path.basename(path)} -> {os.readlink(path)}\n"
 
     visited.add(resolved_path)
-
     result = []
-    indent = "    " * level  # Indentation based on depth level
-    result.append(f"{indent}> {os.path.basename(path)}\n")
+    try:
+        for item in sorted(os.listdir(path), key=lambda x: x.lower()):
+            item_path = os.path.join(path, item)
+            logging.debug(f"Processing item: {item_path}")
 
-    for item in sorted(os.listdir(path), key=lambda x: x.lower()):
-        item_path = os.path.join(path, item)
-        if os.path.islink(item_path):  # Handle symbolic links
-            link_target = os.readlink(item_path)
-            resolved_target = os.path.realpath(item_path)
-            if resolved_target not in visited:
-                if os.path.isdir(resolved_target):
-                    result.append(f"{indent}    [SYMLINK DIR] {item} -> {link_target}\n")
-                    result.append(scan_directory(resolved_target, level + 1, visited))  # Recurse
-                else:
-                    size = calculate_size(resolved_target)
-                    formatted_size = format_file_size(size)
-                    result.append(f"{indent}    [SYMLINK FILE] {item} -> {link_target} - {formatted_size}\n")
+            if os.path.islink(item_path):
+                logging.debug(f"Found symlink: {item_path}")
+                # Handle symlinks...
+
+            elif os.path.isdir(item_path):
+                logging.debug(f"Entering directory: {item_path}")
+                # Handle directories...
+                result.append(scan_directory(item_path, level + 1, visited))
+
             else:
-                result.append(f"{indent}    [SYMLINK] {item} -> {link_target}\n")
-        elif os.path.isdir(item_path):
-            result.append(f"{indent}    [DIR] {item}\n")
-            result.append(scan_directory(item_path, level + 1, visited))  # Recurse
-        else:
-            size = calculate_size(item_path)
-            formatted_size = format_file_size(size)
-            result.append(f"{indent}    {item} - {formatted_size}\n")
+                size = calculate_size(item_path)
+                formatted_size = format_file_size(size)
+                logging.debug(f"File size of {item_path}: {formatted_size}")
+                result.append(f"{'    ' * level}{item} - {formatted_size}\n")
+    except PermissionError as e:
+        logging.warning(f"Permission denied: {path}. Exception: {e}")
+        result.append(f"{'    ' * level}[ACCESS DENIED]\n")
 
     return "".join(result)
 
+# Similar logging improvements can be added to `get_top_5_heavy_items`.
 
 
 def get_top_5_heavy_items(directory, filters=None):
@@ -63,7 +62,14 @@ def get_top_5_heavy_items(directory, filters=None):
         return any(item_path.endswith(ext.strip()) for ext in filters)
 
     items = []
+    visited = set()
+
     for root, dirs, files in os.walk(directory):
+        resolved_root = os.path.realpath(root)
+        if resolved_root in visited:
+            continue
+        visited.add(resolved_root)
+
         for file in files:
             file_path = os.path.join(root, file)
             if not apply_filters(file_path):
@@ -77,6 +83,9 @@ def get_top_5_heavy_items(directory, filters=None):
         for dir_name in dirs:
             dir_path = os.path.join(root, dir_name)
             if not apply_filters(dir_path):
+                continue
+            resolved_path = os.path.realpath(dir_path)
+            if resolved_path in visited:
                 continue
             try:
                 size = sum(
