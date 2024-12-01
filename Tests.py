@@ -6,6 +6,7 @@ from disk_scanner import scan_directory, get_top_5_heavy_items
 from file_size import format_file_size, calculate_size
 from visualizer import visualize_disk_usage
 
+
 class TestDiskScanner(unittest.TestCase):
 
     def setUp(self):

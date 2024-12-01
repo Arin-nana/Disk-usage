@@ -1,10 +1,11 @@
 import os
 import logging
 from file_size import calculate_size, format_file_size
+from concurrent.futures import ThreadPoolExecutor
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def scan_directory(path, level=0, visited=None):
+def scan_directory(path, level=0, visited=None, filters=None):
     logging.debug(f"Scanning directory: {path} at level {level}")
     if not os.path.exists(path):
         logging.error(f"Path does not exist: {path}")
@@ -21,33 +22,49 @@ def scan_directory(path, level=0, visited=None):
     visited.add(resolved_path)
     result = []
     try:
-        for item in sorted(os.listdir(path), key=lambda x: x.lower()):
-            item_path = os.path.join(path, item)
-            logging.debug(f"Processing item: {item_path}")
+        items = sorted(os.listdir(path), key=lambda x: x.lower())
+        with ThreadPoolExecutor() as executor:
+            futures = []
 
-            if os.path.islink(item_path):
-                logging.debug(f"Found symlink: {item_path}")
-                # Handle symlinks...
+            for item in items:
+                item_path = os.path.join(path, item)
+                if os.path.islink(item_path):
+                    logging.debug(f"Found symlink: {item_path}")
+                    if os.path.isdir(item_path):
+                        futures.append(executor.submit(scan_directory, item_path, level + 1, visited, filters))
+                    elif filters is None or any(item_path.endswith(f) for f in filters):
+                        size = calculate_size(item_path)
+                        formatted_size = format_file_size(size)
+                        result.append(f"{'    ' * level}[SYMLINK] {item} - {formatted_size}\n")
+                elif os.path.isdir(item_path):
+                    futures.append(executor.submit(scan_directory, item_path, level + 1, visited, filters))
+                elif filters is None or any(item_path.endswith(f) for f in filters):
+                    size = calculate_size(item_path)
+                    formatted_size = format_file_size(size)
+                    result.append(f"{'    ' * level}{item} - {formatted_size}\n")
 
-            elif os.path.isdir(item_path):
-                logging.debug(f"Entering directory: {item_path}")
-                # Handle directories...
-                result.append(scan_directory(item_path, level + 1, visited))
-
-            else:
-                size = calculate_size(item_path)
-                formatted_size = format_file_size(size)
-                logging.debug(f"File size of {item_path}: {formatted_size}")
-                result.append(f"{'    ' * level}{item} - {formatted_size}\n")
+            for future in futures:
+                try:
+                    result.append(future.result())
+                except Exception as e:
+                    logging.error(f"Error processing item: {e}")
     except PermissionError as e:
         logging.warning(f"Permission denied: {path}. Exception: {e}")
         result.append(f"{'    ' * level}[ACCESS DENIED]\n")
+    except FileNotFoundError:
+        logging.warning(f"Path not found: {path}")
 
     return "".join(result)
 
-# Similar logging improvements can be added to `get_top_5_heavy_items`.
-
-
+def calculate_total_items(path):
+    """Calculate total items in the directory tree for progress tracking."""
+    total = 0
+    try:
+        for _, dirs, files in os.walk(path):
+            total += len(dirs) + len(files)
+    except Exception as e:
+        logging.error(f"Error calculating total items: {e}")
+    return total
 def get_top_5_heavy_items(directory, filters=None):
     """
     Get the 5 largest files or directories in the specified directory with optional filters.
