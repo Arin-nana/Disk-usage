@@ -5,6 +5,35 @@ from concurrent.futures import ThreadPoolExecutor
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
+import os
+
+def count_filtered_items(directory, filters_enabled=False, filters=None):
+    """
+    Counts the number of items in a directory, applying optional file filters.
+
+    Args:
+        directory (str): The root directory path.
+        filters_enabled (bool): Whether to apply file type filters.
+        filters (list or None): A list of file extensions to filter, e.g., [".txt", ".py"].
+
+    Returns:
+        int: The total number of items matching the filters.
+    """
+    count = 0
+    try:
+        for root, dirs, files in os.walk(directory, followlinks=True):
+            if filters_enabled and filters:
+                # Filter files based on the provided extensions
+                filtered_files = [f for f in files if any(f.lower().endswith(ext.lower()) for ext in filters)]
+            else:
+                filtered_files = files
+            count += len(filtered_files)
+            count += len(dirs)  # Include directories in the count
+    except Exception as e:
+        print(f"Error counting filtered items in {directory}: {e}")
+    return count
+
 def scan_directory(path, level=0, visited=None, filters=None):
     logging.debug(f"Scanning directory: {path} at level {level}")
     if not os.path.exists(path):
@@ -23,6 +52,8 @@ def scan_directory(path, level=0, visited=None, filters=None):
     result = []
     try:
         items = sorted(os.listdir(path), key=lambda x: x.lower())
+        if not items:  # Добавляем проверку на пустую директорию
+            return ""  # Пустая директория не выводит свой путь
         with ThreadPoolExecutor() as executor:
             futures = []
 

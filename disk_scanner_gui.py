@@ -2,13 +2,14 @@ import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import threading
-from queue import Queue
+from queue import Queue, Empty
 from disk_scanner import calculate_total_items, get_top_5_heavy_items
 from visualizer import visualize_disk_usage, plot_disk_usage
 from file_size import format_file_size, calculate_size
 import time
 import logging
 
+# Настройка логгирования
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class DiskScannerGUI(tk.Tk):
@@ -22,6 +23,7 @@ class DiskScannerGUI(tk.Tk):
         self._create_widgets()
 
     def _create_widgets(self):
+        logging.debug("Initializing widgets.")
         tk.Label(self, text="Enter directory path:").pack(pady=5)
 
         frame = tk.Frame(self)
@@ -55,13 +57,29 @@ class DiskScannerGUI(tk.Tk):
         self.tree.heading("size", text="Size", anchor="w")
         self.tree.column("size", anchor="w", width=100)
         self.tree.pack(fill=tk.BOTH, expand=True, pady=10)
+        logging.debug("Widgets initialized successfully.")
+
+
+    def count_filtered_items(self, directory):
+        """Подсчитывает количество элементов с учетом фильтров, включая символические ссылки."""
+        count = 0
+        try:
+            for root, dirs, files in os.walk(directory, followlinks=True):  # Добавлен параметр followlinks
+                # Применение фильтров для файлов
+                filtered_files = [f for f in files if self._apply_filters(os.path.join(root, f))]
+                count += len(filtered_files)
+                count += len(dirs)  # Все папки учитываются
+        except Exception as e:
+            logging.exception(f"Error counting filtered items in {directory}: {e}")
+        return count
 
     def _apply_filters(self, file_path):
-        """Проверяет, соответствует ли файл указанным фильтрам."""
-        if not self.filters_enabled.get():  # Если фильтры отключены, возвращаем True
+        if not self.filters_enabled.get():
             return True
         filters = [f.strip() for f in self.filters.get().split(",") if f.strip()]
-        return any(file_path.lower().endswith(f.lower()) for f in filters) if filters else True
+        result = any(file_path.lower().endswith(f.lower()) for f in filters) if filters else True
+        logging.debug(f"Applying filters to {file_path}: {result}")
+        return result
 
     def _browse_directory(self):
         selected_directory = filedialog.askdirectory()
@@ -75,84 +93,96 @@ class DiskScannerGUI(tk.Tk):
     def _scan_and_display_tree(self):
         directory = self.path_entry.get()
         if not os.path.isdir(directory):
+            logging.error(f"Invalid directory: {directory}")
             messagebox.showerror("Error", f"'{directory}' is not a valid directory.")
             return
+        logging.info(f"Scanning directory: {directory}")
         self.tree.delete(*self.tree.get_children())
         self.progress_bar['value'] = 0
         self.time_label['text'] = ""
         self.loading_bar.start()
-        self.total_items = calculate_total_items(directory)
-        self._scan_directory_with_progress(directory)
+        self.total_items = self.count_filtered_items(directory)
+        logging.info(f"Total filtered items to scan: {self.total_items}")
+        threading.Thread(target=self._scan_directory_with_progress, args=(directory,)).start()
 
     def _scan_directory_with_progress(self, directory):
         visited_paths = set()
         progress_queue = Queue()
         start_time = time.time()
+        SYMLINK_TIMEOUT = 5  # Тайм-аут в секундах для символических ссылок
 
         def populate_treeview(tree, parent, path):
-            """Populate the TreeView widget."""
             try:
-                iteration_count = 0  # Счётчик итераций
-                update_interval = 10  # Частота обновления прогресса (каждые 10 итераций)
                 for item in sorted(os.listdir(path), key=lambda x: x.lower()):
                     item_path = os.path.join(path, item)
 
-                    # Если это символическая ссылка, игнорируем её
+                    # Проверка на символические ссылки
                     if os.path.islink(item_path):
-                        logging.info(f"Ignoring symbolic link: {item_path}")
+                        logging.warning(f"Skipping symbolic link: {item_path}")
+                        progress_queue.put(1)  # Прогресс отмечается для символической ссылки
                         continue
 
-                    # Проверяем, если путь уже посещался
                     if item_path in visited_paths:
                         logging.debug(f"Skipping already visited path: {item_path}")
                         continue
                     visited_paths.add(item_path)
 
                     is_dir = os.path.isdir(item_path)
-
-                    # Пропускаем файлы, которые не проходят фильтр
                     if not is_dir and not self._apply_filters(item_path):
                         logging.info(f"Skipping file {item_path} due to filter.")
+                        progress_queue.put(1)  # Прогресс отмечается для отфильтрованного файла
                         continue
 
                     size = calculate_size(item_path)
                     size_text = format_file_size(size)
                     node_id = tree.insert(parent, "end", text=item, values=(size_text,), open=False)
 
-                    # Рекурсивно обрабатываем директории, если они прошли фильтр
+                    # Рекурсивный вызов для директорий
                     if is_dir:
-                        if self._apply_filters(item_path):  # Только обрабатываем директории, которые прошли фильтр
-                            logging.info(f"Check file {item_path} ")
-                            populate_treeview(tree, node_id, item_path)
-                        else:
-                            logging.info(f"Skipping directory {item_path} due to filter.")
-                    if iteration_count % update_interval == 0:
-                        progress_queue.put(1)  # Сообщение для обновления прогресса
-                    iteration_count += 1
-                    progress_queue.put(1)
+                        logging.debug(f"Entering directory: {item_path}")
+                        populate_treeview(tree, node_id, item_path)
+
+                    progress_queue.put(1)  # Прогресс для файла или папки
             except Exception as e:
-                logging.error(f"Error populating treeview: {e}")
+                logging.exception(f"Error populating treeview: {e}")
 
         def update_progress_bar():
             completed_items = 0
-            last_n_times = []
+            last_progress_time = time.time()
+
             while completed_items < self.total_items:
-                completed_items += progress_queue.get()
-                processing_time = time.time() - start_time
-                if len(last_n_times) >= 10:
-                    last_n_times.pop(0)
-                last_n_times.append(processing_time)
-                avg_time_per_item = sum(last_n_times) / len(last_n_times)
-                remaining_time = avg_time_per_item * (self.total_items - completed_items)
-                self.time_label["text"] = f"Estimated remaining time: {remaining_time:.2f} seconds"
-                self.progress_bar["value"] = (completed_items / self.total_items) * 100
-                self.update_idletasks()
+                try:
+                    # Проверка на тайм-аут
+                    if time.time() - last_progress_time > SYMLINK_TIMEOUT:
+                        logging.warning("No progress detected for a long time. Assuming scan is complete.")
+                        break
+
+                    # Обновление прогресса
+                    completed_items += progress_queue.get(timeout=0.5)
+                    last_progress_time = time.time()  # Обновляем время последнего прогресса
+
+                    elapsed_time = time.time() - start_time
+                    remaining_items = self.total_items - completed_items
+                    remaining_time = (elapsed_time / completed_items) * remaining_items if completed_items > 0 else 0
+
+                    # Обновление интерфейса
+                    self.progress_bar["value"] = (completed_items / self.total_items) * 100
+                    self.time_label["text"] = f"Remaining time: {remaining_time:.2f}s"
+                    self.update_idletasks()
+                except Empty:
+                    continue
+
+            # Завершение прогресс-бара
+            self.progress_bar["value"] = 100
+            logging.info("Scan complete.")
             self.loading_bar.stop()
             self.time_label["text"] = "Scan complete!"
 
+        # Запуск потоков
         root_node = self.tree.insert("", "end", text=os.path.basename(directory), values=("Calculating...",), open=True)
         threading.Thread(target=populate_treeview, args=(self.tree, root_node, directory)).start()
         threading.Thread(target=update_progress_bar).start()
+
     def _visualize_disk_usage(self):
         directory = self.path_entry.get()
         if not os.path.isdir(directory):
@@ -167,6 +197,7 @@ class DiskScannerGUI(tk.Tk):
                 filters = self.filters.get().split(",") if self.filters_enabled.get() else None
                 labels, sizes, formatted_sizes = visualize_disk_usage(directory, filters)
                 plot_disk_usage(labels, sizes, formatted_sizes)
+                logging.info("Visualization complete.")
             except Exception as e:
                 logging.exception("Visualization failed.")
                 messagebox.showerror("Error", str(e))
@@ -189,8 +220,8 @@ class DiskScannerGUI(tk.Tk):
                 filters = self.filters.get().split(",") if self.filters_enabled.get() else None
                 top_items = get_top_5_heavy_items(directory, filters)
                 result = "\n".join([f"{item['name']}: {item['size']}" for item in top_items])
+                logging.info(f"Top 5 items: {result}")
                 messagebox.showinfo("Top 5 Largest Items", result)
-                logging.info(f"Top 5 items displayed: {result}")
             except Exception as e:
                 logging.exception("Failed to fetch top 5 items.")
                 messagebox.showerror("Error", str(e))
